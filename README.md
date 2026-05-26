@@ -11,7 +11,7 @@
 > **Claude's hidden multi-agent `Workflow` engine — open-sourced, in Python, runnable anywhere.**
 > Fan out dozens of subagents from one script and keep *only the final answer* in context.
 
-**[⚡ 30-second Quickstart](#3-install--run)** · [Use inside Claude Code](#use-it-inside-claude-code-as-the-workflow-tool) · [Limitations & Risks](#limitations--risks)
+**[⚡ 30-second Quickstart](#install--run)** · [Use inside Claude Code](#use-it-inside-claude-code-as-the-workflow-tool) · [Limitations & Risks](#limitations--risks)
 
 **An open-source alternative to Claude Code's `Workflow` tool** — the multi-agent orchestration
 engine, brought to Python and usable anywhere (and pluggable back into Claude Code as an MCP tool,
@@ -31,28 +31,48 @@ fan-out over dozens of agents possible without flooding the context.
 
 ---
 
-## 1. What Claude's Workflow is
+## What openworkflow gives you
 
-Based on the publicly observable interface of Claude Code 2.1.150 (the `Workflow` tool ships but
-does **not** appear in `/help`). The shape it exposes:
+- **Six orchestration primitives** in a sandboxed script — `agent()`, `parallel()` (barrier
+  fan-out), `pipeline()` (no-barrier staging), `phase()`, `log()`, `workflow()` (inline
+  sub-workflows) — plus a shared, hard **token `budget`** across the whole run.
+- **Tool-using subagents** — `agent()` runs a real multi-turn loop over
+  Read/Write/Edit/Bash/Grep/Glob/WebFetch/WebSearch/NotebookEdit **and any MCP server's tools**.
+- **A `Workflow` tool for Claude Code** — ships an MCP server, so any MCP-capable Claude Code can
+  call `Workflow(...)` like the native (hidden) one.
+- **Autonomous design** — give it a task in plain English; it writes, validates, and runs the
+  orchestration script for you.
+- **Real sandboxing** — `--secure` runs untrusted scripts under an OS sandbox (macOS Seatbelt /
+  Linux bwrap): no network, no writes outside a scratch dir, kernel-enforced.
+- **Resume** — completed `agent()` calls are journaled; a crashed run replays finished work for
+  free, with drift detection.
+- **Zero core dependencies**, pluggable LLM backends (mock / Anthropic API / tool-loop / client
+  sampling), and 60 tests.
 
-**Invocation** (by the main model):
-```js
-Workflow({name: "deep-research", args: "<question>"})   // run a saved, named workflow
-Workflow({scriptPath: "<path>"})                          // re-run a script written earlier
+```bash
+pip install -e '.[anthropic]'
+openworkflow do "Compare three caching strategies and recommend one" --backend tool
 ```
-Each invocation **persists the script to a file** under the session dir and returns the path,
-so you iterate by editing that file and re-invoking with `{scriptPath}`.
 
-**Script contract:**
-- First statement must be `export const meta = { name, description, phases }` — a *pure
-  literal*.
-- `Date.now()` / `new Date()` are **unavailable** in workflow scripts: *"breaks resume."*
-  Scripts must be deterministic so a crashed run can replay cached results (the binary contains
-  a REPL-replay engine with drift detection: *"likely nondeterminism (Date.now, Math.random)
-  took a different branch"*).
+→ **[30-second Quickstart](#install--run)**
 
-**Six in-scope globals** (verbatim semantics from the binary):
+---
+
+## How it works
+
+A workflow is a Python script: its first statement is a `meta = {...}` literal and it defines
+`async def main():`. Inside `main`, six primitives are in scope. When the script calls `agent()`
+(or a tool), the call runs **outside** the script and only its *result* flows back into the
+running script — so you can fan out over dozens of subagents while only the final return value
+reaches the model's context window.
+
+**Script contract**
+- First statement is a `meta = {"name", "description", "phases"}` literal.
+- No clocks/RNG: `time.*`, `datetime.now/utcnow`, `random/secrets/uuid` are rejected at
+  validation. That keeps scripts deterministic, so a crashed run can replay finished work
+  (resume) instead of re-spending tokens.
+
+**Six in-scope primitives**
 
 | primitive | semantics |
 |---|---|
@@ -64,34 +84,16 @@ so you iterate by editing that file and re-invoking with `{scriptPath}`.
 | `workflow(nameOrRef, args?)` | Run another workflow inline; shares this run's concurrency cap, agent counter, abort signal, and token budget. **One level of nesting only.** |
 | `args` / `budget` | Input value / shared token ceiling. `budget = {total, spent(), remaining()}`; `total` is a **hard ceiling** — once `spent() ≥ total`, further `agent()` calls throw. Pool is shared across the run and all nested workflows. |
 
-**Registry** (3 sources, precedence user > project > built-in):
-`~/.claude/workflows/*.js`, `.claude/workflows/*.js`, and plugin-provided workflows. The binary
-also defines a built-in `workflow-subagent` agent type and a `/workflows` view.
+**Where workflows live** — saved scripts are discovered from `~/.openworkflow/workflows/` (user),
+`./.openworkflow/workflows/` (project), the built-in `workflows/` dir, and plugin dirs;
+precedence is built-in < plugin < project < user.
+
+Run a workflow via the CLI, the Python API, or the `Workflow` MCP tool — see
+[Install & run](#install--run).
 
 ---
 
-## 2. How this port maps the design to Python
-
-| original (JS / vm sandbox) | this port (Python) |
-|---|---|
-| `export const meta = {...}` first statement | `meta = {...}` literal first statement (AST-validated) |
-| script body uses globals, async | `async def main():` entrypoint; globals injected into module ns |
-| `Promise` / `await` / `Promise.all` | `asyncio` coroutines / `asyncio.gather` |
-| `vm.Script` sandbox (sealed globals) | two modes: in-process `compile()`+`exec()` (contract+determinism), or **`--secure`**: script runs under `sandbox-exec`/`bwrap` with primitives over an RPC pipe — kernel-enforced no-net/no-fs-egress |
-| `Date.now`/`Math.random` banned | `time.*`, `datetime.now/utcnow`, `random/secrets/uuid` rejected at validation |
-| journal + REPL replay (drift) | append-only JSONL journal keyed by `sha256(phase|label|prompt)`, replays completed `agent()` results, reports drift |
-| workflow-subagent with `tools:["*"]` | `ToolAgentBackend`: a real multi-turn tool-use loop over Read/Write/Edit/Bash/Grep/Glob/WebFetch/WebSearch/NotebookEdit + any MCP tools — the subagent does actual work. Also `AnthropicBackend` (single text/structured call) and `MockBackend` (zero-cost). |
-| MCP servers / `mcp__*` tools | `MCPManager` connects servers from `~/.openworkflow/mcp.json` (stdio + http/sse) and exposes their tools namespaced `mcp__<server>__<tool>` — one integration for the whole MCP ecosystem |
-| `Workflow({name/script/scriptPath})` tool (in Claude Code) | `mcp_server.py` exposes openworkflow as an MCP `Workflow` tool, so any MCP-capable Claude Code can call it like the native (hidden) one — subagents via API key or via client **sampling + tools** |
-| `opts.isolation:'worktree'` | honored — creates a detached git worktree per agent, runs it there, auto-removes if unchanged, keeps + reports the path if modified |
-| `opts.agentType` (custom subagent) | resolved to a system-prompt override from `~/.openworkflow/agents/<type>.md` |
-| plugin workflows (`<plugin>:<name>`) | scanned from `~/.openworkflow/plugins/*/workflows/*.py`, namespaced; precedence built-in < plugin < project < user |
-| `/workflows` progress tree | `progress.py` phase/log narrator (rich optional) |
-| `~/.claude/workflows` etc. | `~/.openworkflow/workflows`, `./.openworkflow/workflows`, built-in `workflows/` |
-
----
-
-## 3. Install & run
+## Install & run
 
 ```bash
 cd openworkflow
@@ -275,7 +277,7 @@ calls so `parallel`/`pipeline` keep their concurrency.
 
 ---
 
-## 4. Faithful vs. deliberately different
+## Faithful vs. deliberately different
 
 **Faithful:** the six primitives and their exact semantics (barrier vs no-barrier, failures→None,
 schema→validated object), `meta`-first contract, determinism ban, shared hard budget ceiling,
@@ -371,7 +373,7 @@ keep **`MockBackend`** for CI and plumbing tests.
 
 ---
 
-## 5. Layout
+## Layout
 
 ```
 openworkflow/

@@ -11,7 +11,7 @@
 > **Claude 隐藏的多智能体 `Workflow` 引擎——开源、纯 Python、随处可跑。**
 > 用一段脚本扇出几十个子 agent,只把*最终答案*留进上下文。
 
-**[⚡ 30 秒上手](#3-安装与运行)** · [在 Claude Code 中使用](#在-claude-code-中使用作为-workflow-工具) · [局限与风险](#局限与风险)
+**[⚡ 30 秒上手](#安装与运行)** · [在 Claude Code 中使用](#在-claude-code-中使用作为-workflow-工具) · [局限与风险](#局限与风险)
 
 **Claude Code `Workflow` 工具的开源替代**——把这套多智能体编排引擎带到 Python,随处可用(也能作为 MCP 工具接回 Claude Code,而原生 `Workflow` 在大多数版本里是隐藏/不可用的)。
 
@@ -21,22 +21,34 @@
 
 ---
 
-## 1. Claude 的 Workflow 是什么
+## openworkflow 能给你什么
 
-基于 Claude Code 2.1.150 公开可观察的接口(`Workflow` 工具确实存在,但**不出现在 `/help`** 中)。它暴露的形态如下:
+- **沙箱脚本里的六个编排原语**——`agent()`、`parallel()`(屏障扇出)、`pipeline()`(无屏障流水线)、`phase()`、`log()`、`workflow()`(内联子 workflow)——外加贯穿整次运行的共享、硬上限 **token `budget`**。
+- **会用工具的子 agent**——`agent()` 跑真实多轮循环,覆盖 Read/Write/Edit/Bash/Grep/Glob/WebFetch/WebSearch/NotebookEdit **以及任意 MCP 服务器的工具**。
+- **给 Claude Code 的 `Workflow` 工具**——自带 MCP server,任何支持 MCP 的 Claude Code 都能像原生(隐藏)那个一样调 `Workflow(...)`。
+- **自主设计**——给一句中文任务,它替你编写、校验并运行编排脚本。
+- **真实沙箱**——`--secure` 让不可信脚本在 OS 沙箱(macOS Seatbelt / Linux bwrap)下运行:无网络、scratch 外不可写,内核级强制。
+- **断点续跑**——已完成的 `agent()` 调用记入 journal;崩溃后免费重放已完成的工作,带漂移检测。
+- **零核心依赖**、可插拔 LLM 后端(mock / Anthropic API / 工具循环 / 客户端 sampling)、60 个测试。
 
-**调用方式**(由主模型发起):
-```js
-Workflow({name: "deep-research", args: "<问题>"})   // 跑一个已保存的命名 workflow
-Workflow({scriptPath: "<路径>"})                      // 重跑之前写好的脚本
+```bash
+pip install -e '.[anthropic]'
+openworkflow do "比较三种缓存策略并给出推荐" --backend tool
 ```
-每次调用都会把脚本持久化到 session 目录并返回路径,便于通过 `{scriptPath}` 迭代。
 
-**脚本契约:**
-- 首条语句必须是 `meta = { name, description, phases }` 字面量(纯字面量)。
-- 脚本中**禁用 `Date.now()` / `new Date()`**:*"会破坏 resume"*。脚本必须确定性,以便崩溃后重放缓存结果(二进制中含一个带漂移检测的 REPL 重放引擎)。
+→ **[30 秒上手](#安装与运行)**
 
-**在作用域内的六个原语:**
+---
+
+## 工作原理
+
+一个 workflow 就是一段 Python 脚本:首条语句是 `meta = {...}` 字面量,并定义 `async def main():`。在 `main` 内有六个原语可用。当脚本调用 `agent()`(或某个工具)时,该调用在脚本**之外**执行,只有它的*结果*流回正在运行的脚本——所以你可以扇出几十个子 agent,而只有最终返回值进入模型的上下文窗口。
+
+**脚本契约**
+- 首条语句是 `meta = {"name", "description", "phases"}` 字面量。
+- 禁用 clock/RNG:`time.*`、`datetime.now/utcnow`、`random/secrets/uuid` 在校验期被拒绝。这保证脚本确定性,从而崩溃后能重放已完成的工作(resume)而不是重花 token。
+
+**六个作用域内的原语**
 
 | 原语 | 语义 |
 |---|---|
@@ -48,30 +60,13 @@ Workflow({scriptPath: "<路径>"})                      // 重跑之前写好的
 | `workflow(nameOrRef, args?)` | 内联运行另一个 workflow;共享本次运行的并发上限、agent 计数、中止信号与 token 预算。**仅一层嵌套**。 |
 | `args` / `budget` | 输入值 / 共享 token 上限。`budget = {total, spent(), remaining()}`;`total` 是**硬上限**——一旦 `spent() ≥ total`,后续 `agent()` 抛错。池在整个运行及所有嵌套 workflow 间共享。 |
 
-**注册来源**(3 处,优先级 user > project > 内置):`~/.claude/workflows/*.js`、`.claude/workflows/*.js`、以及插件提供的 workflow。二进制中还定义了内置的 `workflow-subagent` agent 类型与一个 `/workflows` 视图。
+**workflow 存放位置**——已保存的脚本从这些位置发现:`~/.openworkflow/workflows/`(user)、`./.openworkflow/workflows/`(project)、内置 `workflows/` 目录,以及插件目录;优先级 内置 < plugin < project < user。
+
+通过 CLI、Python API,或 `Workflow` MCP 工具运行 workflow——见 [安装与运行](#安装与运行)。
 
 ---
 
-## 2. 本项目如何映射到 Python
-
-| 原版(JS / vm 沙箱) | 本项目(Python) |
-|---|---|
-| `export const meta = {...}` 为首语句 | `meta = {...}` 字面量为首语句(AST 校验) |
-| 脚本体使用全局原语、async | `async def main():` 入口;原语注入到模块命名空间 |
-| `Promise` / `await` / `Promise.all` | `asyncio` 协程 / `asyncio.gather` |
-| `vm.Script` 沙箱(密封全局) | 两种模式:进程内 `compile()`+`exec()`(契约+确定性),或 **`--secure`**:脚本在 `sandbox-exec`/`bwrap` 下运行,原语经 RPC 管道——内核级强制,无网络、无文件外泄 |
-| `Date.now`/`Math.random` 禁用 | 校验期拒绝 `time.*`、`datetime.now/utcnow`、`random/secrets/uuid` |
-| journal + REPL 重放(漂移) | 追加式 JSONL journal,按 `sha256(phase\|label\|prompt)` 键;重放已完成的 `agent()` 结果,报告漂移 |
-| `tools:["*"]` 的 workflow-subagent | `ToolAgentBackend`:真实多轮 tool-use 循环,覆盖 Read/Write/Edit/Bash/Grep/Glob/WebFetch/WebSearch/NotebookEdit + 任意 MCP 工具。另有 `AnthropicBackend`(单次文本/结构化)与 `MockBackend`(零成本)。 |
-| MCP 服务器 / `mcp__*` 工具 | `MCPManager` 连接 `~/.openworkflow/mcp.json` 中的服务器(stdio + http/sse),按 `mcp__<server>__<tool>` 命名暴露其工具——一次集成,接通整个 MCP 生态 |
-| `Workflow({...})` 工具(Claude Code 内) | `mcp_server.py` 把 openworkflow 暴露为 MCP `Workflow` 工具,任何支持 MCP 的 Claude Code 都能像原生(隐藏)那个一样调用——子 agent 经 API key 或经客户端 **sampling + 工具** 供能 |
-| `opts.isolation:'worktree'` | 已实现——每个 agent 起一个 detached worktree,在其中运行,未改动则自动删除,有改动则保留并报告路径 |
-| `opts.agentType`(自定义子 agent) | 解析为来自 `~/.openworkflow/agents/<type>.md` 的系统提示覆盖 |
-| 插件 workflow(`<plugin>:<name>`) | 从 `~/.openworkflow/plugins/*/workflows/*.py` 扫描并命名空间化;优先级 内置 < plugin < project < user |
-
----
-
-## 3. 安装与运行
+## 安装与运行
 
 ```bash
 cd openworkflow
