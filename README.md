@@ -2,6 +2,17 @@
 
 *English | [简体中文](README.zh-CN.md)*
 
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Tests](https://img.shields.io/badge/tests-60%20passing-brightgreen)
+![Dependencies](https://img.shields.io/badge/core%20deps-0-success)
+![Stars](https://img.shields.io/github/stars/chaizijun1/openworkflow?style=social)
+
+> **Claude's hidden multi-agent `Workflow` engine — open-sourced, in Python, runnable anywhere.**
+> Fan out dozens of subagents from one script and keep *only the final answer* in context.
+
+**[⚡ 30-second Quickstart](#3-install--run)** · [Use inside Claude Code](#use-it-inside-claude-code-as-the-workflow-tool) · [Limitations & Risks](#limitations--risks)
+
 **An open-source alternative to Claude Code's `Workflow` tool** — the multi-agent orchestration
 engine, brought to Python and usable anywhere (and pluggable back into Claude Code as an MCP tool,
 where the native `Workflow` is hidden/unavailable in most versions).

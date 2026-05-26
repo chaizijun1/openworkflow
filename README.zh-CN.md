@@ -2,6 +2,17 @@
 
 *[English](README.md) | 简体中文*
 
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Tests](https://img.shields.io/badge/tests-60%20passing-brightgreen)
+![Dependencies](https://img.shields.io/badge/core%20deps-0-success)
+![Stars](https://img.shields.io/github/stars/chaizijun1/openworkflow?style=social)
+
+> **Claude 隐藏的多智能体 `Workflow` 引擎——开源、纯 Python、随处可跑。**
+> 用一段脚本扇出几十个子 agent,只把*最终答案*留进上下文。
+
+**[⚡ 30 秒上手](#3-安装与运行)** · [在 Claude Code 中使用](#在-claude-code-中使用作为-workflow-工具) · [局限与风险](#局限与风险)
+
 **Claude Code `Workflow` 工具的开源替代**——把这套多智能体编排引擎带到 Python,随处可用(也能作为 MCP 工具接回 Claude Code,而原生 `Workflow` 在大多数版本里是隐藏/不可用的)。
 
 它复刻了执行模型:编排器编写一段脚本;脚本内发起的工具调用会**暂停**、执行、并把结果返回给**正在运行的脚本**——**而不是**返回到模型的上下文窗口——所以只有脚本的最终返回值会回到模型。这正是它能在不撑爆上下文的前提下,廉价地扇出(fan-out)几十个 agent 的关键。
