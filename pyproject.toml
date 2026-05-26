@@ -1,0 +1,31 @@
+[project]
+name = "openworkflow"
+version = "0.1.0"
+description = "Python multi-agent workflow orchestration engine — sandboxed orchestration scripts with agent()/parallel()/pipeline()/phase()/log()/workflow() primitives, a shared token budget, OS-level sandboxing, and an MCP Workflow tool for Claude Code."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["agents", "orchestration", "workflow", "mcp", "llm", "claude"]
+authors = [{ name = "chaizijun1" }]
+dependencies = []
+
+[project.optional-dependencies]
+anthropic = ["anthropic>=0.40"]
+mcp = ["mcp>=1.0"]
+rich = ["rich>=13"]
+
+[project.urls]
+# If your GitHub username differs from chaizijun1, change it here.
+Homepage = "https://github.com/chaizijun1/openworkflow"
+Repository = "https://github.com/chaizijun1/openworkflow"
+
+[project.scripts]
+openworkflow = "openworkflow.cli:main"
+openworkflow-mcp = "openworkflow.mcp_server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["openworkflow"]
