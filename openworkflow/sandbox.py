@@ -167,50 +167,53 @@ def _is_workflow_source(src: str) -> bool:
     )
 
 
-def _peel_bom(s: str) -> str | None:
+# Each peel maps a candidate to zero or more *further* candidates (a list, so a single layer can
+# expand to several — e.g. a blob with multiple ``` fences yields one candidate per fence).
+def _peel_bom(s: str) -> list[str]:
     """Strip a leading UTF-8 BOM — encoding noise that ``str.strip()`` leaves in place."""
     t = s.lstrip("﻿")
-    return t if t != s else None
+    return [t] if t != s else []
 
 
-def _peel_fence(s: str) -> str | None:
-    m = _FENCE_RE.search(s)
-    return m.group(1) if m else None
+def _peel_fence(s: str) -> list[str]:
+    """Every markdown-fenced block — not just the first, so a decoy fence (prose / ```bash) before
+    the real ```python workflow doesn't hide it."""
+    return _FENCE_RE.findall(s)
 
 
-def _peel_json(s: str) -> str | None:
+def _peel_json(s: str) -> list[str]:
     """A whole script that was JSON-encoded into a string (escaped ``\\n`` / ``\\"``)."""
     if not s or s[0] not in "\"'":
-        return None
+        return []
     try:
         v = json.loads(s)
     except Exception:  # noqa: BLE001 - any decode failure just means "not this layer"
-        return None
-    return v if isinstance(v, str) else None
+        return []
+    return [v] if isinstance(v, str) else []
 
 
-def _peel_pyliteral(s: str) -> str | None:
+def _peel_pyliteral(s: str) -> list[str]:
     """A script wrapped in a Python string literal (single/triple quotes, escaped newlines)."""
     if not s or s[0] not in "\"'":
-        return None
+        return []
     try:
         v = ast.literal_eval(s)
     except Exception:  # noqa: BLE001
-        return None
-    return v if isinstance(v, str) else None
+        return []
+    return [v] if isinstance(v, str) else []
 
 
-def _peel_quotes(s: str) -> str | None:
+def _peel_quotes(s: str) -> list[str]:
     """Literally strip a matched pair of surrounding quotes (handles real newlines inside)."""
     for q in ('"""', "'''"):
         if len(s) >= 2 * len(q) and s.startswith(q) and s.endswith(q):
-            return s[len(q):-len(q)]
+            return [s[len(q):-len(q)]]
     if len(s) >= 2 and s[0] in "\"'" and s[-1] == s[0]:
-        return s[1:-1]
-    return None
+        return [s[1:-1]]
+    return []
 
 
-def _peel_to_meta(s: str) -> str | None:
+def _peel_to_meta(s: str) -> list[str]:
     """Slice a leading *prose* preamble off: from the first ``meta = {`` at a line start.
 
     Only fires when the text before ``meta`` is NOT real code — i.e. empty, comments/blank lines,
@@ -220,17 +223,17 @@ def _peel_to_meta(s: str) -> str | None:
     """
     m = META_ASSIGN_RE.search(s)
     if not m or m.start() == 0:
-        return None
+        return []
     prefix = s[:m.start()]
     if prefix.strip() == "":
-        return s[m.start():]
+        return [s[m.start():]]
     try:
         tree = ast.parse(textwrap.dedent(prefix))
     except (SyntaxError, ValueError):
-        return s[m.start():]      # prose / not Python -> unambiguous to drop
+        return [s[m.start():]]    # prose / not Python -> unambiguous to drop
     if not tree.body:
-        return s[m.start():]      # only comments / blank lines -> unambiguous to drop
-    return None                   # real leading statement(s) -> ambiguous, leave for strict check
+        return [s[m.start():]]    # only comments / blank lines -> unambiguous to drop
+    return []                     # real leading statement(s) -> ambiguous, leave for strict check
 
 
 _PEELS = (_peel_bom, _peel_fence, _peel_json, _peel_pyliteral, _peel_quotes, _peel_to_meta)
@@ -259,10 +262,10 @@ def normalize_script(raw: str, *, max_candidates: int = 64) -> str:
             return textwrap.dedent(s).strip() + "\n"
         for peel in _PEELS:
             try:
-                nxt = peel(s)
+                candidates = peel(s)
             except Exception:  # noqa: BLE001 - a misbehaving peel never aborts normalization
-                nxt = None
-            if nxt is not None:
+                candidates = []
+            for nxt in candidates:
                 nxt = nxt.strip()
                 if nxt and nxt not in seen:
                     queue.append(nxt)

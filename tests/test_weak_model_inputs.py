@@ -104,6 +104,28 @@ def test_leading_prose_still_sliced():
     assert compile_script(normalize_script(src)).meta["name"] == "p"
 
 
+def test_multiple_fences_picks_the_workflow_one():
+    """A decoy fence (prose / bash) before the real ```python fence must not defeat rescue."""
+    raw = ('Here is the plan:\n```\nstep 1\nstep 2\n```\n'
+           'And the code:\n```python\nmeta = {"name": "twofence"}\n'
+           'async def main():\n    return await agent("hi")\n```\n')
+    assert compile_script(normalize_script(raw)).meta["name"] == "twofence"
+
+    raw2 = ('```bash\npip install openworkflow\n```\n'
+            '```python\nmeta = {"name": "twofence2"}\n'
+            'async def main():\n    return await agent("hi")\n```')
+    assert compile_script(normalize_script(raw2)).meta["name"] == "twofence2"
+
+
+def test_leading_banned_import_not_rescued_into_nondeterministic_pass():
+    """Determinism guarantee: slicing `import random` away would let _check_determinism pass a
+    nondeterministic script the strict validator rejects. Tolerance must NOT do that."""
+    raw = ("import random\nmeta = {'name': 'x'}\n"
+           "async def main():\n    return random.random()\n")
+    with pytest.raises(WorkflowScriptError):
+        compile_script(normalize_script(raw))
+
+
 def test_leading_bom_is_stripped():
     """A UTF-8 BOM is unambiguous encoding noise (str.strip() doesn't remove it) — recover it."""
     src = "﻿meta = {'name': 'bom'}\nasync def main():\n    return 1\n"

@@ -162,3 +162,5 @@ print(s('\"meta = {}\nasync def main():\n    return 1\"',None,None)[0][:10])"
 ---
 
 *维护:P1–P7 已全部内化(2026-06);本文已从「硬化指南」降级为「本地集成说明」。后续若发现新的弱模型失效模式,补 `tests/fixtures/weak_inputs/` 样本 + `sandbox.normalize_script` 的 peel,并在此记录。*
+
+*硬化后做过一轮 5-agent 对抗审计(`normalize_script` 的漏救/误改/误收),据此再收紧三处,均有回归用例:① 不再切掉 `meta` 前的合法语句(`import`/赋值/`def`/`from __future__`)——避免静默改写程序、并堵住「切掉 banned import 绕过 determinism 校验」;② 多个 ``` 围栏时取含 `meta` 的那个(不再只取第一个);③ 剥离前导 UTF-8 BOM。审计确认 deceptive-meta(`metadata=`/`meta==`/字符串内 `meta={}` 等)与强模型干净脚本均无误判。*
