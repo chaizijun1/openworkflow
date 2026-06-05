@@ -75,10 +75,11 @@ F1/F2 已从「外部补丁」升级为仓库内一等公民(默认开、有测�
   - 验收:坏输入返回的字符串里含 `meta = {` 范例与「raw source」字样。
   - **已实现**(`sandbox.py::SCRIPT_FORMAT_HINT` + `MINIMAL_EXAMPLE`):空脚本 / 首句非 `meta` / `SyntaxError` 三类格式错误都附最小范例与「raw source」提示;经 `execute_workflow` 返回给模型的 `error:` 字符串同样带上。4 用例覆盖(单元 + 端到端)。
 
-- [ ] **P3 · 给 Workflow 工具加可选 `task` 参数(根本招:免模型写脚本)**
+- [x] **P3 · 给 Workflow 工具加可选 `task` 参数(根本招:免模型写脚本)**✅
   - 问题:让弱模型现写编排脚本是最大瓶颈。
   - 做法:`Workflow(task="一句话任务")` → 服务端用 backend 调 `author.py` 的自动设计(对标 CLI 的 `do`/`design`)生成并校验脚本再跑。这样弱模型只需给自然语言,完全绕开「写 Python」。注意:authoring 也走同一个本地 backend,质量受限 → 仍建议同时保留 §P4。
   - 验收:`Workflow(task="并行回答3个常识问题再汇总")` 在本地后端下能跑通并返回结果。
+  - **已实现**(`mcp_server.execute_workflow` 新增 `task=` + `Workflow` 工具新增 `task` 入参,经 `runtime.do_task` 设计→校验→运行;footer 标注 `auto-designed '<name>' by <scaffold|llm>`)。优先级:`script`/`name`/`scriptPath` > `task`(显式脚本永远优先);`task` 也走 `_nullish`。工具描述改为「EASIEST: task / 然后 name / ADVANCED: script」引导弱模型走 `task`。4 用例覆盖。
 
 - [ ] **P4 · 命名 workflow 优先 + 内置一批通用模板**
   - 问题:复杂编排弱模型写不对;最可靠是「按名调已写好的」。

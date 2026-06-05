@@ -284,11 +284,24 @@ def _sanitize_args(script: Any, name: Any, scriptPath: Any) -> tuple[Any, Any, A
     return script, name, scriptPath
 
 
+def _serialize_result(result: Any, *, designed: Any = None) -> str:
+    """Render a WorkflowResult for the model's context: payload + a one-line accounting footer."""
+    payload = result.result
+    body = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False, default=str)
+    footer = f"\n\n— {result.agent_count} agent(s), {result.spent_tokens} output tokens"
+    if result.failures:
+        footer += f", {len(result.failures)} failure(s)"
+    if designed is not None:
+        footer += f"; auto-designed '{designed.compiled.meta.get('name', '?')}' by {designed.authored_by}"
+    return body + footer
+
+
 async def execute_workflow(
     *,
     script: str | None = None,
     name: str | None = None,
     scriptPath: str | None = None,
+    task: str | None = None,
     args: Any = None,
     budget: int | None = None,
     backend: AgentBackend | None = None,
@@ -296,8 +309,11 @@ async def execute_workflow(
 ) -> str:
     """Core handler (FastMCP-independent, so it's directly testable).
 
-    Mirrors the original Workflow tool's inputs: an inline ``script``, a saved ``name``, or a
-    ``scriptPath``. Returns the workflow's final result serialized for the model's context.
+    Mirrors the original Workflow tool's inputs — an inline ``script``, a saved ``name``, or a
+    ``scriptPath`` — and adds ``task``: a natural-language description the server itself designs
+    into a validated script and runs (the brain+body loop), so a weak model never has to author
+    Python. Explicit ``script``/``name``/``scriptPath`` always win; ``task`` is the fallback.
+    Returns the workflow's final result serialized for the model's context.
     """
     backend = backend or make_backend(ctx)
     secure = os.environ.get("OPENWORKFLOW_SECURE") == "1"
@@ -306,6 +322,22 @@ async def execute_workflow(
         _warn_once(warning)
 
     script, name, scriptPath = _sanitize_args(script, name, scriptPath)   # 容错:弱模型把 script 套引号 / 传 "null"
+    if _lenient():
+        task = _nullish(task)
+
+    # task= : autonomously design a workflow from natural language, then run it. Lowest precedence,
+    # so an explicit script/name/scriptPath is always preferred over re-authoring.
+    if script is None and name is None and scriptPath is None and task is not None:
+        from .runtime import do_task
+        try:
+            result, design = await do_task(
+                task, args=args, backend=backend, budget_total=budget,
+                concurrency=concurrency, quiet=True, secure=secure,
+            )
+        except Exception as e:  # noqa: BLE001 - report cleanly to the model
+            return f"error: {type(e).__name__}: {e}"
+        return _serialize_result(result, designed=design)
+
     if script is not None:
         source: Any = script
     elif name is not None:
@@ -317,8 +349,9 @@ async def execute_workflow(
     elif scriptPath is not None:
         source = WorkflowRegistry().from_script_path(scriptPath)
     else:
-        return ("error: provide one of `script` (inline source), `name` (saved workflow), "
-                "or `scriptPath`.")
+        return ("error: provide one of `script` (inline raw Python source), `name` (saved "
+                "workflow), `scriptPath`, or `task` (a natural-language task the server will "
+                "design into a workflow for you).")
 
     try:
         result = await run_workflow(
@@ -328,12 +361,7 @@ async def execute_workflow(
     except Exception as e:  # noqa: BLE001 - report cleanly to the model
         return f"error: {type(e).__name__}: {e}"
 
-    payload = result.result
-    body = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False, default=str)
-    footer = f"\n\n— {result.agent_count} agent(s), {result.spent_tokens} output tokens"
-    if result.failures:
-        footer += f", {len(result.failures)} failure(s)"
-    return body + footer
+    return _serialize_result(result)
 
 
 def list_workflows() -> str:
@@ -351,14 +379,17 @@ def build_server():
 
     @mcp.tool(
         description=(
-            "Run a multi-agent orchestration workflow. Write a self-contained Python script in "
-            "`script` whose first statement is `meta = {'name': ...}` and which defines "
-            "`async def main():` using the in-scope primitives agent(prompt, opts), "
-            "parallel(thunks), pipeline(items, *stages), phase(title), log(msg), "
-            "workflow(name, args), plus `args` and `budget`. Or pass `name` to run a saved "
-            "workflow, or `scriptPath`. Only the final return value comes back to you — fan out "
-            "over many agents without flooding context. ONLY use when the user explicitly opted "
-            "into multi-agent orchestration."
+            "Run a multi-agent orchestration workflow. EASIEST: pass `task` — a natural-language "
+            "description (e.g. \"answer 3 trivia questions in parallel then summarize\") — and the "
+            "server designs, validates, and runs the workflow for you (no Python needed). Or pass "
+            "`name` to run a saved workflow (call WorkflowList to see them). ADVANCED: pass "
+            "`script` = a self-contained Python program whose first statement is "
+            "`meta = {'name': ...}` and which defines `async def main():` using the in-scope "
+            "primitives agent(prompt, opts), parallel(thunks), pipeline(items, *stages), "
+            "phase(title), log(msg), workflow(name, args), plus `args` and `budget`. `script` must "
+            "be RAW source — do NOT wrap it in quotes, JSON, or a ```python fence. Only the final "
+            "return value comes back to you — fan out over many agents without flooding context. "
+            "ONLY use when the user explicitly opted into multi-agent orchestration."
         )
     )
     async def Workflow(  # noqa: N802 - match the original tool name
@@ -366,11 +397,12 @@ def build_server():
         script: str | None = None,
         name: str | None = None,
         scriptPath: str | None = None,
+        task: str | None = None,
         args: Any = None,
         budget: int | None = None,
     ) -> str:
         return await execute_workflow(script=script, name=name, scriptPath=scriptPath,
-                                      args=args, budget=budget, ctx=ctx)
+                                      task=task, args=args, budget=budget, ctx=ctx)
 
     @mcp.tool(description="List saved openworkflow workflows (user/project/built-in).")
     async def WorkflowList() -> str:  # noqa: N802

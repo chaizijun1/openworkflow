@@ -53,6 +53,36 @@ def test_unknown_name_reports_available():
 def test_no_input_is_helpful_error():
     out = run()
     assert out.startswith("error: provide one of")
+    assert "task" in out  # the natural-language fallback is advertised
+
+
+# ----------------------------------------------------------------- task= auto-author (P3)
+
+def test_task_param_designs_and_runs():
+    """The root weak-model affordance: give natural language, server designs+validates+runs."""
+    out = run(task="Research the tradeoffs of vector databases")
+    assert "error" not in out.split("\n")[0].lower()
+    assert "agent(s)" in out
+    assert "auto-designed" in out  # footer notes it was authored, not hand-written
+
+
+def test_task_param_pipeline_shape_for_per_item():
+    out = run(task="Review each of these files for bugs", args=["a.py", "b.py"])
+    assert "agent(s)" in out
+    assert "error" not in out.split("\n")[0].lower()
+
+
+def test_explicit_script_takes_precedence_over_task():
+    src = "meta = {'name':'t'}\nasync def main():\n    return await agent('explicit')\n"
+    out = run(script=src, task="this should be ignored")
+    assert "explicit" in out
+    assert "auto-designed" not in out  # the hand-written script ran, not a designed one
+
+
+def test_task_nullish_is_ignored():
+    # "null"/"" task must not trigger authoring; falls through to the helpful error
+    out = run(task="null")
+    assert out.startswith("error: provide one of")
 
 
 def test_json_result_serialized():
