@@ -190,11 +190,16 @@ def test_end_to_end_unrecoverable_error_teaches():
 
 # ----------------------------------------------------------------- end-to-end through the tool
 
-def test_wrapped_script_runs_end_to_end():
-    """A mangled script reaches the runtime and actually fans out (MockBackend)."""
-    raw = (FIXDIR / "md_fence_python.txt").read_text(encoding="utf-8")
+@pytest.mark.parametrize("fixture", FIXTURES, ids=lambda p: p.name)
+def test_every_fixture_runs_end_to_end(fixture):
+    """Regression: every mangled input, through the real tool entry, reaches the runtime and runs.
+
+    Stronger than the unit normalize_script check — it guards the whole wiring
+    (_sanitize_args -> normalize_script -> run_workflow) against future refactors.
+    """
+    raw = fixture.read_text(encoding="utf-8")
     out = asyncio.run(execute_workflow(script=raw, backend=MockBackend()))
-    assert "error" not in out.split("\n")[0].lower()
+    assert "error" not in out.split("\n")[0].lower(), out
     assert "agent(s)" in out
 
 

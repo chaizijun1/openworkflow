@@ -92,9 +92,10 @@ F1/F2 已从「外部补丁」升级为仓库内一等公民(默认开、有测�
   - 验收:无任何 env 时弱样本即被救活;`OPENWORKFLOW_LENIENT=0` 时恢复严格报错。
   - **已实现**(`mcp_server._lenient()`,默认开):**输入容错**(P1 的 `normalize_script`/`_nullish`/name·scriptPath 重路由,以及 `task` 的 nullish)全部在 `_sanitize_args` 内经 `_lenient()` 早返回门控;`=0`/`false`/`no`/`off` 恢复严格。**注**:P2 的「教模型改」错误信息为纯增量提示、不改变「哪些脚本被接受」的契约语义,故始终开启(严格模式下报错更详尽,不影响接受集)。env 拼写 + 端到端救活/严格各有用例锁定。
 
-- [ ] **P6 · 回归测试 + CI**
+- [x] **P6 · 回归测试 + CI**✅
   - 做法:所有弱样本进 `tests/`,纳入现有 60 测试套件;保证未来重构不回归。
   - 验收:`pytest` 全绿,弱样本用例计入。
+  - **已实现**:弱样本 fixtures + 用例全部纳入套件(**60→125 绿**);新增「每个 fixture 经真实工具入口 `execute_workflow` 端到端跑通」的参数化回归(守住 `_sanitize_args→normalize_script→run_workflow` 整条线)。`pyproject.toml` 固定 `testpaths`;新增 `.github/workflows/tests.yml`:**核心零依赖**矩阵(Py 3.10–3.13,仅 `pip install -e .`,印证「零核心依赖」)+ extras 任务(装 `[anthropic,mcp]` 并 `build_server()` 冒烟)。
 
 - [ ] **P7 · 文档回写**
   - 做法:每内化一项,更新 `README.md` / `README.zh-CN.md` 的「Local / weak-model」小节;并在本文 checklist 打勾、删去对应的「外部补丁」描述。
