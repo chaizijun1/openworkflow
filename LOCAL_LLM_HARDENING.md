@@ -87,9 +87,10 @@ F1/F2 已从「外部补丁」升级为仓库内一等公民(默认开、有测�
   - 验收:`WorkflowList` 列出内置模板;`Workflow(name="code-review", args={...})` 跑通。
   - **已实现**:新增 `workflows/code_review.py`(`code-review`,按文件并行审查→汇总)、`workflows/vote.py`(`vote`,N 路投票取多数);多角度调研沿用既有 `deep-research`,逐文件流水沿用 `bug-hunt`。两个新模板的 `args` 容错(list / dict / str / None 都能跑)。`list_workflows()` 与 `WorkflowList` 描述加了「优先 `Workflow(name=...)` 而非手写脚本」的引导。10 用例(注册、编译、跨 args 形态运行)。
 
-- [ ] **P5 · lenient 模式默认开 + 开关**
+- [x] **P5 · lenient 模式默认开 + 开关**✅
   - 做法:把 P1/P2 的容错挂在 `OPENWORKFLOW_LENIENT`(**默认 1**;设 0 可关回严格契约)。保证「开箱即用对弱模型友好」。
   - 验收:无任何 env 时弱样本即被救活;`OPENWORKFLOW_LENIENT=0` 时恢复严格报错。
+  - **已实现**(`mcp_server._lenient()`,默认开):**输入容错**(P1 的 `normalize_script`/`_nullish`/name·scriptPath 重路由,以及 `task` 的 nullish)全部在 `_sanitize_args` 内经 `_lenient()` 早返回门控;`=0`/`false`/`no`/`off` 恢复严格。**注**:P2 的「教模型改」错误信息为纯增量提示、不改变「哪些脚本被接受」的契约语义,故始终开启(严格模式下报错更详尽,不影响接受集)。env 拼写 + 端到端救活/严格各有用例锁定。
 
 - [ ] **P6 · 回归测试 + CI**
   - 做法:所有弱样本进 `tests/`,纳入现有 60 测试套件;保证未来重构不回归。

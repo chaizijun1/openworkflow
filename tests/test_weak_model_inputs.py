@@ -128,6 +128,34 @@ def test_lenient_on_by_default(monkeypatch):
     assert _sanitize_args("null", None, None) == (None, None, None)
 
 
+@pytest.mark.parametrize("val,expected", [
+    (None, True),       # unset -> lenient (friendly by default)
+    ("1", True), ("true", True), ("TRUE", True), ("yes", True), ("on", True), ("", True),
+    ("0", False), ("false", False), ("False", False), ("no", False), ("off", False), (" off ", False),
+])
+def test_lenient_env_spellings(monkeypatch, val, expected):
+    from openworkflow.mcp_server import _lenient
+    if val is None:
+        monkeypatch.delenv("OPENWORKFLOW_LENIENT", raising=False)
+    else:
+        monkeypatch.setenv("OPENWORKFLOW_LENIENT", val)
+    assert _lenient() is expected
+
+
+def test_lenient_default_rescues_end_to_end(monkeypatch):
+    monkeypatch.delenv("OPENWORKFLOW_LENIENT", raising=False)
+    raw = (FIXDIR / "json_encoded.txt").read_text(encoding="utf-8")
+    out = asyncio.run(execute_workflow(script=raw, backend=MockBackend()))
+    assert "error" not in out.split("\n")[0].lower() and "agent(s)" in out
+
+
+def test_lenient_off_fails_end_to_end(monkeypatch):
+    monkeypatch.setenv("OPENWORKFLOW_LENIENT", "0")
+    raw = (FIXDIR / "json_encoded.txt").read_text(encoding="utf-8")
+    out = asyncio.run(execute_workflow(script=raw, backend=MockBackend()))
+    assert out.startswith("error:")  # strict contract: mangled input is rejected
+
+
 # ----------------------------------------------------------------- P2: errors that teach
 
 def _err(src):
