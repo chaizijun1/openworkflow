@@ -41,6 +41,19 @@ DETERMINISM_HINT = (
     "Stamp results after the workflow returns, or pass values in via `args`."
 )
 
+# Shown on format/validation failures so a weaker model can self-correct from the error alone:
+# a concrete minimal script + the single most common mistake (wrapping the source).
+MINIMAL_EXAMPLE = (
+    'meta = {"name": "demo"}\n'
+    "async def main():\n"
+    '    return await parallel([lambda: agent("q1"), lambda: agent("q2")])'
+)
+SCRIPT_FORMAT_HINT = (
+    "Pass raw source: the `script` arg must be raw Python — NOT wrapped in quotes, NOT JSON, "
+    "NOT inside a ```python fence, and with no prose before it. The FIRST statement must be a "
+    "`meta = {...}` dict literal. Minimal valid example:\n" + MINIMAL_EXAMPLE
+)
+
 
 class WorkflowScriptError(Exception):
     pass
@@ -56,7 +69,7 @@ class CompiledScript:
 
 def _extract_meta(tree: ast.Module) -> dict[str, Any]:
     if not tree.body:
-        raise WorkflowScriptError("empty script")
+        raise WorkflowScriptError("empty script.\n" + SCRIPT_FORMAT_HINT)
     first = tree.body[0]
     ok = (
         isinstance(first, ast.Assign)
@@ -68,7 +81,7 @@ def _extract_meta(tree: ast.Module) -> dict[str, Any]:
     if not ok:
         raise WorkflowScriptError(
             "the FIRST statement must be a `meta = {...}` dict literal "
-            "(name, description, phases)"
+            "(name, description, phases).\n" + SCRIPT_FORMAT_HINT
         )
     try:
         meta = ast.literal_eval(first.value)
@@ -104,7 +117,7 @@ def compile_script(source: str, filename: str = "workflow.py") -> CompiledScript
     try:
         tree = ast.parse(source, filename=filename)
     except SyntaxError as e:
-        raise WorkflowScriptError(f"SyntaxError: {e}") from e
+        raise WorkflowScriptError(f"SyntaxError: {e}.\n" + SCRIPT_FORMAT_HINT) from e
     meta = _extract_meta(tree)
     _check_determinism(tree)
     code = compile(tree, filename=filename, mode="exec")

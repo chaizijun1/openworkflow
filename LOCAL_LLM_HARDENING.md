@@ -69,10 +69,11 @@ F1/F2 已从「外部补丁」升级为仓库内一等公民(默认开、有测�
   - 验收:`tests/fixtures/weak_inputs/` 放 ≥8 个真实坏样本,`normalize_script` 全部产出可被 `compile_script` 接受的源码。
   - **已实现**(`openworkflow/sandbox.py::normalize_script` + `_is_workflow_source` + 5 个 peel;`mcp_server._sanitize_args` 调用):覆盖①–⑤及其**任意组合**(BFS peel,最少剥离优先);结构校验=`ast.parse` 且首句 `meta = {dict}`;干净脚本原样返回,无法还原则原样返回让严格校验照常报错。挂 `OPENWORKFLOW_LENIENT`(默认开,`=0` 恢复严格)。11 个 fixtures + 22 用例(`tests/test_weak_model_inputs.py`),全套 60→82 绿。
 
-- [ ] **P2 · 错误信息「教模型改」**(弱模型靠 error 反馈重试)
+- [x] **P2 · 错误信息「教模型改」**(弱模型靠 error 反馈重试)✅
   - 问题:当前 error 只说「错在哪」,不给「怎么对」。弱模型据此改不动。
   - 做法:校验失败时,error 里附**一个最小正确范例**(3-5 行的 `meta=...; async def main(): return await parallel([...])`)+ 一句「pass raw Python source, do NOT wrap in quotes」。
   - 验收:坏输入返回的字符串里含 `meta = {` 范例与「raw source」字样。
+  - **已实现**(`sandbox.py::SCRIPT_FORMAT_HINT` + `MINIMAL_EXAMPLE`):空脚本 / 首句非 `meta` / `SyntaxError` 三类格式错误都附最小范例与「raw source」提示;经 `execute_workflow` 返回给模型的 `error:` 字符串同样带上。4 用例覆盖(单元 + 端到端)。
 
 - [ ] **P3 · 给 Workflow 工具加可选 `task` 参数(根本招:免模型写脚本)**
   - 问题:让弱模型现写编排脚本是最大瓶颈。

@@ -128,6 +128,38 @@ def test_lenient_on_by_default(monkeypatch):
     assert _sanitize_args("null", None, None) == (None, None, None)
 
 
+# ----------------------------------------------------------------- P2: errors that teach
+
+def _err(src):
+    with pytest.raises(WorkflowScriptError) as ei:
+        compile_script(src)
+    return str(ei.value)
+
+
+def test_meta_error_carries_example_and_raw_hint():
+    msg = _err("x = 1\nasync def main():\n    return 1\n")  # meta not first
+    assert "meta = {" in msg          # a concrete correct example
+    assert "raw source" in msg.lower()  # tells the model not to wrap it
+
+
+def test_syntaxerror_carries_example():
+    msg = _err("this is not python ??")
+    assert "meta = {" in msg and "raw source" in msg.lower()
+
+
+def test_empty_script_carries_example():
+    msg = _err("   \n  \n")
+    assert "meta = {" in msg
+
+
+def test_end_to_end_unrecoverable_error_teaches():
+    """The tool's returned error string (what the model actually sees) teaches the fix."""
+    out = asyncio.run(execute_workflow(script="x = 1\nasync def main():\n    return 1\n",
+                                       backend=MockBackend()))
+    assert out.startswith("error:")
+    assert "meta = {" in out and "raw source" in out.lower()
+
+
 # ----------------------------------------------------------------- end-to-end through the tool
 
 def test_wrapped_script_runs_end_to_end():
