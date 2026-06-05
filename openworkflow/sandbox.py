@@ -167,6 +167,12 @@ def _is_workflow_source(src: str) -> bool:
     )
 
 
+def _peel_bom(s: str) -> str | None:
+    """Strip a leading UTF-8 BOM — encoding noise that ``str.strip()`` leaves in place."""
+    t = s.lstrip("﻿")
+    return t if t != s else None
+
+
 def _peel_fence(s: str) -> str | None:
     m = _FENCE_RE.search(s)
     return m.group(1) if m else None
@@ -205,14 +211,29 @@ def _peel_quotes(s: str) -> str | None:
 
 
 def _peel_to_meta(s: str) -> str | None:
-    """Drop leading prose/imports: slice from the first ``meta = {`` at a line start."""
+    """Slice a leading *prose* preamble off: from the first ``meta = {`` at a line start.
+
+    Only fires when the text before ``meta`` is NOT real code — i.e. empty, comments/blank lines,
+    or unparseable prose. A leading *valid statement* (e.g. ``import os`` or ``X = 1``) is left in
+    place on purpose: dropping it would silently change the program, which is an ambiguous
+    "recovery" the strict validator should reject instead (the contract requires ``meta`` first).
+    """
     m = META_ASSIGN_RE.search(s)
-    if m and m.start() > 0:
+    if not m or m.start() == 0:
+        return None
+    prefix = s[:m.start()]
+    if prefix.strip() == "":
         return s[m.start():]
-    return None
+    try:
+        tree = ast.parse(textwrap.dedent(prefix))
+    except (SyntaxError, ValueError):
+        return s[m.start():]      # prose / not Python -> unambiguous to drop
+    if not tree.body:
+        return s[m.start():]      # only comments / blank lines -> unambiguous to drop
+    return None                   # real leading statement(s) -> ambiguous, leave for strict check
 
 
-_PEELS = (_peel_fence, _peel_json, _peel_pyliteral, _peel_quotes, _peel_to_meta)
+_PEELS = (_peel_bom, _peel_fence, _peel_json, _peel_pyliteral, _peel_quotes, _peel_to_meta)
 
 
 def normalize_script(raw: str, *, max_candidates: int = 64) -> str:

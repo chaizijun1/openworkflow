@@ -19,7 +19,12 @@ import pytest
 
 from openworkflow import MockBackend
 from openworkflow.mcp_server import _nullish, _sanitize_args, execute_workflow
-from openworkflow.sandbox import WorkflowScriptError, compile_script, normalize_script
+from openworkflow.sandbox import (
+    _is_workflow_source,
+    WorkflowScriptError,
+    compile_script,
+    normalize_script,
+)
 
 FIXDIR = Path(__file__).parent / "fixtures" / "weak_inputs"
 FIXTURES = sorted(FIXDIR.glob("*.txt"))
@@ -73,6 +78,39 @@ def test_clean_script_untouched():
 def test_normalize_passthrough_non_string():
     # robustness: a non-string must not blow up (returned as-is)
     assert normalize_script(None) is None  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("prefix", [
+    "import os\n",
+    "from __future__ import annotations\n",
+    "X = 1\n",
+    "helper = lambda x: x\n",
+])
+def test_leading_valid_statement_not_silently_dropped(prefix):
+    """Tolerance must not DROP real code. Slicing off leading *prose* is unambiguous; slicing off a
+    leading *valid statement* (e.g. `import os`) silently changes the program, which violates the
+    'only recover when unambiguous' rule. Such input should be left for the strict validator, not
+    rewritten into a different (compiling) script."""
+    src = prefix + "meta = {'name': 'x'}\nasync def main():\n    return 1\n"
+    norm = normalize_script(src)
+    # if normalize claims it's a workflow, it must NOT have dropped the author's leading code
+    if _is_workflow_source(norm):
+        assert prefix.strip() in norm, f"normalize dropped leading code: {norm!r}"
+
+
+def test_leading_prose_still_sliced():
+    """Conversely, leading PROSE (not valid Python) is still unambiguously strippable."""
+    src = "Here is the workflow you asked for:\n\nmeta = {'name': 'p'}\nasync def main():\n    return 1\n"
+    assert compile_script(normalize_script(src)).meta["name"] == "p"
+
+
+def test_leading_bom_is_stripped():
+    """A UTF-8 BOM is unambiguous encoding noise (str.strip() doesn't remove it) — recover it."""
+    src = "﻿meta = {'name': 'bom'}\nasync def main():\n    return 1\n"
+    assert compile_script(normalize_script(src)).meta["name"] == "bom"
+    # combined with a fence too (BOM outside a markdown wrap)
+    src2 = "﻿```python\nmeta = {'name': 'bom2'}\nasync def main():\n    return 1\n```\n"
+    assert compile_script(normalize_script(src2)).meta["name"] == "bom2"
 
 
 # ----------------------------------------------------------------- _sanitize_args wiring
