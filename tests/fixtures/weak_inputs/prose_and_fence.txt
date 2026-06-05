@@ -1,0 +1,9 @@
+Sure! Here's a workflow that fans out:
+
+```python
+meta = {"name": "prose-fence"}
+async def main():
+    return await agent("hi")
+```
+
+Hope this helps!

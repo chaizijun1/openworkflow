@@ -1,0 +1,4 @@
+"meta = {"name": "dq-wrapped"}
+async def main():
+    return await agent("hi")
+"

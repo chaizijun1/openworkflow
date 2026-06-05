@@ -1,0 +1,142 @@
+"""Weak-model tolerance: the bad ``script`` args local 27B-class models actually emit.
+
+These are the failure modes from ``LOCAL_LLM_HARDENING.md`` §3/§P1. The contract is that
+``script`` is *raw Python source* whose first statement is ``meta = {...}``. Weak models mangle
+that into quote-wrapped / JSON-encoded / markdown-fenced / prose-prefixed blobs. The fixtures in
+``tests/fixtures/weak_inputs/`` are byte-exact captures of each mangle; ``normalize_script`` must
+recover compilable source from every one — while leaving a clean script (the strong-model path)
+untouched, and restoring strict behavior when ``OPENWORKFLOW_LENIENT=0``.
+"""
+
+import asyncio
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import pytest
+
+from openworkflow import MockBackend
+from openworkflow.mcp_server import _nullish, _sanitize_args, execute_workflow
+from openworkflow.sandbox import WorkflowScriptError, compile_script, normalize_script
+
+FIXDIR = Path(__file__).parent / "fixtures" / "weak_inputs"
+FIXTURES = sorted(FIXDIR.glob("*.txt"))
+
+# expected meta["name"] recovered from each fixture (pins the rescue, not just "it compiled")
+EXPECTED = {
+    "json_encoded.txt": "json-encoded",
+    "double_quote_wrapped.txt": "dq-wrapped",
+    "single_quote_wrapped.txt": "sq-wrapped",
+    "triple_quote_wrapped.txt": "triple-wrapped",
+    "single_quote_escaped.txt": "sq-escaped",
+    "md_fence_python.txt": "md-python",
+    "md_fence_bare.txt": "md-bare",
+    "prose_before_meta.txt": "prose-before",
+    "prose_and_fence.txt": "prose-fence",
+    "fence_inside_quotes.txt": "fence-in-quotes",
+    "comment_blanklines_before_meta.txt": "comment-before",
+}
+
+CLEAN = (
+    "meta = {'name': 'clean', 'description': 'd'}\n"
+    "async def main():\n"
+    "    return await agent('do the thing: ' + (args or ''))\n"
+)
+
+
+def test_fixtures_present():
+    # guard against an empty/missing fixtures dir silently passing the parametrized test
+    assert len(FIXTURES) >= 8, f"expected >=8 weak-input fixtures, found {len(FIXTURES)}"
+
+
+@pytest.mark.parametrize("fixture", FIXTURES, ids=lambda p: p.name)
+def test_normalize_rescues_every_fixture(fixture):
+    raw = fixture.read_text(encoding="utf-8")
+    src = normalize_script(raw)
+    compiled = compile_script(src)  # must not raise
+    assert isinstance(compiled.meta.get("name"), str) and compiled.meta["name"]
+    if fixture.name in EXPECTED:
+        assert compiled.meta["name"] == EXPECTED[fixture.name]
+
+
+def test_clean_script_untouched():
+    """Strong-model path: a valid script must survive normalize_script semantically intact."""
+    src = normalize_script(CLEAN)
+    a = compile_script(src).meta
+    b = compile_script(CLEAN).meta
+    assert a == b == {"name": "clean", "description": "d"}
+    assert "async def main" in src and "agent(" in src
+
+
+def test_normalize_passthrough_non_string():
+    # robustness: a non-string must not blow up (returned as-is)
+    assert normalize_script(None) is None  # type: ignore[arg-type]
+
+
+# ----------------------------------------------------------------- _sanitize_args wiring
+
+def test_nullish_maps_string_null_to_none():
+    for s in ("null", "NULL", "none", "None", "undefined", "", "  ", "nil"):
+        # "nil" is NOT nullish — only the documented tokens map to None
+        expected = None if s.strip().lower() in ("null", "none", "undefined", "") else s
+        assert _nullish(s) == expected
+
+
+def test_sanitize_string_null_defaults():
+    # weak models pass omitted optional args as the literal string "null"
+    assert _sanitize_args("null", None, "null") == (None, None, None)
+    assert _sanitize_args("none", "undefined", "") == (None, None, None)
+
+
+def test_sanitize_unwraps_wrapped_script():
+    raw = (FIXDIR / "double_quote_wrapped.txt").read_text(encoding="utf-8")
+    script, name, path = _sanitize_args(raw, None, None)
+    assert name is None and path is None
+    compile_script(script)  # the unwrapped script compiles
+
+
+def test_sanitize_reroutes_source_in_name():
+    """A weak model sometimes dumps the whole source into `name` (or scriptPath)."""
+    raw = (FIXDIR / "md_fence_python.txt").read_text(encoding="utf-8")
+    script, name, path = _sanitize_args(None, raw, None)
+    assert script is not None and name is None
+    assert compile_script(script).meta["name"] == "md-python"
+
+    script2, name2, path2 = _sanitize_args(None, None, raw)
+    assert script2 is not None and path2 is None
+    compile_script(script2)
+
+
+def test_sanitize_keeps_real_name():
+    # a plain saved-workflow name must NOT be rerouted to script
+    assert _sanitize_args(None, "deep-research", None) == (None, "deep-research", None)
+
+
+# ----------------------------------------------------------------- lenient switch (P5 seam)
+
+def test_lenient_off_restores_strict(monkeypatch):
+    monkeypatch.setenv("OPENWORKFLOW_LENIENT", "0")
+    raw = (FIXDIR / "double_quote_wrapped.txt").read_text(encoding="utf-8")
+    # strict mode: no unwrapping, no nullish coercion -> args pass through verbatim
+    assert _sanitize_args(raw, None, "null") == (raw, None, "null")
+
+
+def test_lenient_on_by_default(monkeypatch):
+    monkeypatch.delenv("OPENWORKFLOW_LENIENT", raising=False)
+    assert _sanitize_args("null", None, None) == (None, None, None)
+
+
+# ----------------------------------------------------------------- end-to-end through the tool
+
+def test_wrapped_script_runs_end_to_end():
+    """A mangled script reaches the runtime and actually fans out (MockBackend)."""
+    raw = (FIXDIR / "md_fence_python.txt").read_text(encoding="utf-8")
+    out = asyncio.run(execute_workflow(script=raw, backend=MockBackend()))
+    assert "error" not in out.split("\n")[0].lower()
+    assert "agent(s)" in out
+
+
+if __name__ == "__main__":
+    sys.exit(pytest.main([__file__, "-v"]))

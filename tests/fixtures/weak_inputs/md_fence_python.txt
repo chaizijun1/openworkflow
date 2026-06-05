@@ -1,0 +1,5 @@
+```python
+meta = {"name": "md-python"}
+async def main():
+    return await agent("hi")
+```

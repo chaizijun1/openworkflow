@@ -1,0 +1,6 @@
+# auto-generated workflow
+# multi-agent
+
+meta = {"name": "comment-before"}
+async def main():
+    return await agent("hi")

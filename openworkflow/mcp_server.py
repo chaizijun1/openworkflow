@@ -44,6 +44,7 @@ from .backends import AgentBackend, AgentResult, AnthropicBackend, MockBackend, 
 from .mcp_client import MCPManager
 from .registry import WorkflowRegistry
 from .runtime import run_workflow
+from .sandbox import _is_workflow_source, normalize_script
 
 # FastMCP evaluates tool annotations against module globals (we use PEP 563 string annotations),
 # so `Context` must be importable here. It's optional — fall back to Any when the SDK is absent.
@@ -249,44 +250,37 @@ def _warn_once(message: str) -> None:
         _warned_sampling = True
 
 
-# --- tolerance for weaker models (e.g. local 27B) that mangle the tool args ---
+# --- tolerance for weaker models (e.g. local 27B) that mangle the tool args ------------------
+# Gated by OPENWORKFLOW_LENIENT (default ON; set 0/false to restore the strict native contract).
+# The heavy lifting (unwrapping mangled source) lives in sandbox.normalize_script; here we add the
+# argument-level coercions: nullish defaults and rerouting source mis-placed into name/scriptPath.
+def _lenient() -> bool:
+    return os.environ.get("OPENWORKFLOW_LENIENT", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
 def _nullish(v: Any) -> Any:
-    """Weaker models often pass an absent arg as the string ``"null"``/``"none"``/``""``."""
+    """Weaker models often pass an absent optional arg as the string ``"null"``/``"none"``/``""``."""
     if v is None:
         return None
     s = str(v).strip()
     return None if s.lower() in ("null", "none", "undefined", "") else s
 
 
-def _unwrap_script(s: str) -> str:
-    """Weaker models often wrap the whole script in an extra quote layer / JSON-encode it.
-
-    The native contract is: ``script`` is raw Python source whose first statement is ``meta = {...}``.
-    If the source instead begins with a quote and the inner content begins with ``meta``, undo the
-    wrapping (try JSON decode for escaped forms; else strip the surrounding quotes literally).
-    """
-    s = s.strip()
-    if not s or s[0] not in "\"'":
-        return s
-    try:
-        d = json.loads(s)
-        if isinstance(d, str) and d.lstrip().startswith("meta"):
-            return d.strip()
-    except Exception:
-        pass
-    q = s[0]
-    body = s[1:]
-    if body.rstrip().endswith(q):
-        body = body.rstrip()[:-1]
-    if body.lstrip().startswith("meta"):
-        return body.strip()
-    return s
-
-
 def _sanitize_args(script: Any, name: Any, scriptPath: Any) -> tuple[Any, Any, Any]:
+    """Coerce weak-model tool args back onto the native contract (no-op when not lenient)."""
+    if not _lenient():
+        return script, name, scriptPath
     script, name, scriptPath = _nullish(script), _nullish(name), _nullish(scriptPath)
     if isinstance(script, str) and script:
-        script = _unwrap_script(script)
+        script = normalize_script(script)
+    else:
+        # a weak model sometimes dumps the whole source into `name` or `scriptPath` instead of
+        # `script` — reroute it, but only when it genuinely normalizes to a workflow (so a plain
+        # saved-workflow name / real file path is left alone).
+        if isinstance(name, str) and name and _is_workflow_source(normalize_script(name)):
+            script, name = normalize_script(name), None
+        elif isinstance(scriptPath, str) and scriptPath and _is_workflow_source(normalize_script(scriptPath)):
+            script, scriptPath = normalize_script(scriptPath), None
     return script, name, scriptPath
 
 

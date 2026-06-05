@@ -1,0 +1,5 @@
+```
+meta = {"name": "md-bare"}
+async def main():
+    return await agent("hi")
+```

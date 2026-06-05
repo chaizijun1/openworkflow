@@ -48,12 +48,12 @@
 
 ## 3. 已知弱模型失效模式 + 当前缓解(已在 `openworkflow/mcp_server.py`)
 
-| # | 失效模式 | 表现 | 当前缓解 |
+| # | 失效模式 | 表现 | 状态 |
 |---|---|---|---|
-| F1 | **script 被多套一层引号 / JSON 编码** | `script` 首字符是 `"` 或 `'`,内部 `\n`/`\"` 转义 → 校验报 `WorkflowScriptError: the FIRST statement must be a meta = {...}` | `_unwrap_script`:先试 `json.loads`,否则剥首尾引号(当内层以 `meta` 开头) |
-| F2 | **缺省参数传成字符串 `"null"`** | `script="null"` 且 `scriptPath="null"` → 报 `provide one of script/name/scriptPath` | `_nullish`:把 `"null"/"none"/"undefined"/""` 归一成 `None` |
+| F1 | **script 被多套一层引号 / JSON 编码 / md 围栏 / 前导散文** | `script` 首字符是 `"`/`'`/` ``` `,或 `meta` 前有散文 → 校验报 `the FIRST statement must be a meta = {...}` | ✅ **已内化**(P1):`sandbox.normalize_script` 覆盖全部形态及组合,有 11 fixtures + 22 用例 |
+| F2 | **缺省参数传成字符串 `"null"`** | `script="null"` 且 `scriptPath="null"` → 报 `provide one of script/name/scriptPath` | ✅ **已内化**(P1):`mcp_server._nullish`,纳入测试,挂 `OPENWORKFLOW_LENIENT` |
 
-当前补丁全部集中在一个入口函数 `execute_workflow` 的开头(见 §6 精确代码),**没有散落到别处**,便于后续重构/合并进上游。
+F1/F2 已从「外部补丁」升级为仓库内一等公民(默认开、有测试、可经 `OPENWORKFLOW_LENIENT=0` 关回严格)。**已无独立的外部补丁**;§6 仅留作历史对照。
 
 > ⚠️ 这只是「止血」。要达到「无需外部补丁」,需把容错做成 openworkflow 的**一等公民**(默认开启、有测试、文档化),并补齐下面路线图中尚未覆盖的失效模式。
 
@@ -63,10 +63,11 @@
 
 > 每项格式:**问题 → 做法 → 验收测试**。完成后在 `[ ]` 打勾并 commit。建议新建 `tests/test_weak_model_inputs.py` 收集所有 fixtures。
 
-- [ ] **P1 · script 摄取彻底硬化**(把 `_unwrap_script` 升级为「尽力提取从 `meta` 开始的合法 Python」)
+- [x] **P1 · script 摄取彻底硬化**(把 `_unwrap_script` 升级为「尽力提取从 `meta` 开始的合法 Python」)✅
   - 问题:除 F1 的引号/JSON,弱模型还会产出:① markdown 代码围栏 ` ```python … ``` `;② `meta` 之前有前导散文/注释/空行;③ 整段是合法 JSON 字符串(`"\n"` 转义);④ 单引号包裹;⑤ 把内联源码误塞进 `scriptPath`/`name`。
   - 做法:实现一个 `normalize_script(raw) -> str`:依次尝试 (a) 去 markdown 围栏;(b) `json.loads`(若是字符串);(c) 剥成对首尾引号;(d) 从第一处出现 `^\s*meta\s*=` 起截取到末尾;(e) `ast.parse` 验证可解析。任一步得到「首句 `meta=` 且能 parse」即返回。把它用在 `script`、以及当 `name`/`scriptPath` 的值其实是源码(含换行/`meta=`)时也兜底转走。
   - 验收:`tests/fixtures/weak_inputs/` 放 ≥8 个真实坏样本,`normalize_script` 全部产出可被 `compile_script` 接受的源码。
+  - **已实现**(`openworkflow/sandbox.py::normalize_script` + `_is_workflow_source` + 5 个 peel;`mcp_server._sanitize_args` 调用):覆盖①–⑤及其**任意组合**(BFS peel,最少剥离优先);结构校验=`ast.parse` 且首句 `meta = {dict}`;干净脚本原样返回,无法还原则原样返回让严格校验照常报错。挂 `OPENWORKFLOW_LENIENT`(默认开,`=0` 恢复严格)。11 个 fixtures + 22 用例(`tests/test_weak_model_inputs.py`),全套 60→82 绿。
 
 - [ ] **P2 · 错误信息「教模型改」**(弱模型靠 error 反馈重试)
   - 问题:当前 error 只说「错在哪」,不给「怎么对」。弱模型据此改不动。
