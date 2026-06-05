@@ -368,7 +368,10 @@ def list_workflows() -> str:
     defs = WorkflowRegistry().all()
     if not defs:
         return "(no saved workflows)"
-    return "\n".join(f"- {n} [{d.source}]: {d.description}" for n, d in sorted(defs.items()))
+    header = ('Reliable pre-built workflows — prefer these over writing a script. Run one with '
+              'Workflow(name="<name>", args=...):\n')
+    body = "\n".join(f"- {n} [{d.source}]: {d.description}" for n, d in sorted(defs.items()))
+    return header + body
 
 
 def build_server():
@@ -404,7 +407,10 @@ def build_server():
         return await execute_workflow(script=script, name=name, scriptPath=scriptPath,
                                       task=task, args=args, budget=budget, ctx=ctx)
 
-    @mcp.tool(description="List saved openworkflow workflows (user/project/built-in).")
+    @mcp.tool(description=(
+        "List the saved openworkflow workflows (user/project/built-in). Prefer running one of "
+        "these by `Workflow(name=...)` over hand-writing a script — it's the most reliable path."
+    ))
     async def WorkflowList() -> str:  # noqa: N802
         return list_workflows()
 

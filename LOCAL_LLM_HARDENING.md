@@ -81,10 +81,11 @@ F1/F2 已从「外部补丁」升级为仓库内一等公民(默认开、有测�
   - 验收:`Workflow(task="并行回答3个常识问题再汇总")` 在本地后端下能跑通并返回结果。
   - **已实现**(`mcp_server.execute_workflow` 新增 `task=` + `Workflow` 工具新增 `task` 入参,经 `runtime.do_task` 设计→校验→运行;footer 标注 `auto-designed '<name>' by <scaffold|llm>`)。优先级:`script`/`name`/`scriptPath` > `task`(显式脚本永远优先);`task` 也走 `_nullish`。工具描述改为「EASIEST: task / 然后 name / ADVANCED: script」引导弱模型走 `task`。4 用例覆盖。
 
-- [ ] **P4 · 命名 workflow 优先 + 内置一批通用模板**
+- [x] **P4 · 命名 workflow 优先 + 内置一批通用模板**✅
   - 问题:复杂编排弱模型写不对;最可靠是「按名调已写好的」。
   - 做法:`workflows/` 内置几个高频可靠模板(如:并行审查一个目录的代码并汇总、一个主题多角度调研汇总、N 路投票取多数)。强化 `WorkflowList` 的描述,让模型优先 `name=` 调用。
   - 验收:`WorkflowList` 列出内置模板;`Workflow(name="code-review", args={...})` 跑通。
+  - **已实现**:新增 `workflows/code_review.py`(`code-review`,按文件并行审查→汇总)、`workflows/vote.py`(`vote`,N 路投票取多数);多角度调研沿用既有 `deep-research`,逐文件流水沿用 `bug-hunt`。两个新模板的 `args` 容错(list / dict / str / None 都能跑)。`list_workflows()` 与 `WorkflowList` 描述加了「优先 `Workflow(name=...)` 而非手写脚本」的引导。10 用例(注册、编译、跨 args 形态运行)。
 
 - [ ] **P5 · lenient 模式默认开 + 开关**
   - 做法:把 P1/P2 的容错挂在 `OPENWORKFLOW_LENIENT`(**默认 1**;设 0 可关回严格契约)。保证「开箱即用对弱模型友好」。
