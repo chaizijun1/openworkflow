@@ -4,7 +4,7 @@
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-60%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-125%20passing-brightgreen)
 ![Dependencies](https://img.shields.io/badge/core%20deps-0-success)
 ![Stars](https://img.shields.io/github/stars/chaizijun1/openworkflow?style=social)
 
@@ -47,7 +47,7 @@ fan-out over dozens of agents possible without flooding the context.
 - **Resume** — completed `agent()` calls are journaled; a crashed run replays finished work for
   free, with drift detection.
 - **Zero core dependencies**, pluggable LLM backends (mock / Anthropic API / tool-loop / client
-  sampling), and 60 tests.
+  sampling), local/weak-model tolerance, and 125 tests.
 
 ```bash
 pip install -e '.[anthropic]'
@@ -175,6 +175,47 @@ Offline (mock / no key) a deterministic *scaffold designer* picks structure from
 (parallel fan-out + synthesis, or a per-item pipeline) so the full design→validate→run loop is
 runnable for free. Library API: `design_workflow(task, backend=...)` and
 `do_task(task, backend=...) -> (WorkflowResult, DesignResult)`.
+
+### Local / weak-model use (Qwen, llama.cpp, any local gateway)
+
+openworkflow is hardened to be driven by **local, weaker models** (e.g. a 27B Qwen behind a
+LiteLLM gateway, as in [xclaude](https://github.com/)) — not just frontier models. Point the
+backend at your gateway with env vars; **no code patches are needed**:
+
+```jsonc
+// mcp.json — connect openworkflow to a local Anthropic-compatible gateway
+{"mcpServers": {"openworkflow": {
+  "command": "openworkflow-mcp",
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://127.0.0.1:4000",   // your gateway
+    "ANTHROPIC_API_KEY":  "any-token-the-gateway-accepts",
+    "OPENWORKFLOW_BACKEND": "tool"
+  }
+}}}
+```
+
+A weak model rarely emits a perfect multi-line `script`. Three escalating ways to drive the tool,
+**easiest first** — prefer the top two:
+
+1. **`task=`** — give plain language, the server designs + validates + runs the script for you
+   (no Python from the model): `Workflow(task="answer 3 trivia questions in parallel, then summarize")`.
+2. **`name=`** — call a pre-built, reliable workflow: `Workflow(name="code-review", args=["a.py","b.py"])`.
+   `WorkflowList` shows them (built-ins: `code-review`, `vote`, `deep-research`, `bug-hunt`).
+3. **`script=`** — raw Python source, for when the model *can* write it.
+
+**Built-in tolerance** (on by default) means even a mangled `script` is recovered rather than
+rejected — `sandbox.normalize_script` peels markdown ` ```python ` fences, JSON-encoding, single/
+double/triple quote wrapping (real *or* escaped newlines), and leading prose, in any combination,
+then validates with `ast.parse`. Omitted args passed as the string `"null"` are coerced to `None`,
+and source mistakenly placed in `name`/`scriptPath` is rerouted to `script`. When validation does
+fail, the error carries a **minimal correct example** so the model can self-correct.
+
+Tolerance is gated by **`OPENWORKFLOW_LENIENT`** (default `1`). Set `OPENWORKFLOW_LENIENT=0` to
+restore the strict native contract (no unwrapping, no coercion) — useful for testing parity with
+the original. A clean script from a strong model is never altered either way.
+
+See [`LOCAL_LLM_HARDENING.md`](LOCAL_LLM_HARDENING.md) for the integration recipe, the catalogue
+of failure modes covered, and the acceptance baseline.
 
 ### Writing a workflow
 
@@ -391,13 +432,13 @@ openworkflow/
 │   ├── _rpc.py        # length-prefixed JSON framing over the pipe boundary
 │   ├── budget.py      # shared hard token ceiling
 │   ├── journal.py     # resume + drift detection
-│   ├── sandbox.py     # meta-first contract + determinism validation
+│   ├── sandbox.py     # meta-first contract + determinism validation + normalize_script (weak-model tolerance)
 │   ├── registry.py    # user/project/built-in workflow discovery
 │   ├── progress.py    # phase/log narrator
 │   └── cli.py         # `openworkflow` command
-├── workflows/         # built-in saved workflows (deep-research, bug-hunt)
+├── workflows/         # built-in saved workflows (code-review, vote, deep-research, bug-hunt)
 ├── examples/          # voting.py (parallel + budget scaling + sub-workflow)
-└── tests/             # 60 tests, all on the zero-cost mock backend / fakes
+└── tests/             # 125 tests, all on the zero-cost mock backend / fakes
 ```
 
 ---

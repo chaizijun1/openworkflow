@@ -4,7 +4,7 @@
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-60%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-125%20passing-brightgreen)
 ![Dependencies](https://img.shields.io/badge/core%20deps-0-success)
 ![Stars](https://img.shields.io/github/stars/chaizijun1/openworkflow?style=social)
 
@@ -124,6 +124,36 @@ openworkflow do "比较三种缓存策略并给出推荐" --budget 200000   # �
 ```
 
 无 key(mock)时用确定性的 *scaffold 设计器*,从任务线索选结构(并行扇出 + 综合,或逐项流水线),整条 设计→校验→运行 链路免费可跑。
+
+### 本地 / 弱模型驱动(Qwen、llama.cpp、任意本地网关)
+
+openworkflow 经过硬化,**可被本地弱模型驱动**(例如经 LiteLLM 网关的 27B Qwen,即 xclaude 场景),不止服务前沿模型。用环境变量把后端指向你的网关即可,**无需任何代码补丁**:
+
+```jsonc
+// mcp.json —— 把 openworkflow 接到本地 Anthropic 兼容网关
+{"mcpServers": {"openworkflow": {
+  "command": "openworkflow-mcp",
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://127.0.0.1:4000",   // 你的网关
+    "ANTHROPIC_API_KEY":  "网关接受的任意 token",
+    "OPENWORKFLOW_BACKEND": "tool"
+  }
+}}}
+```
+
+弱模型很难一次写对多行 `script`。驱动工具有三条路,**由易到难**——优先前两条:
+
+1. **`task=`** —— 给一句自然语言,服务端替你设计 + 校验 + 运行(模型完全不写 Python):
+   `Workflow(task="并行回答3个常识问题再汇总")`。
+2. **`name=`** —— 直接调已写好的可靠 workflow:`Workflow(name="code-review", args=["a.py","b.py"])`。
+   `WorkflowList` 可列出(内置:`code-review`、`vote`、`deep-research`、`bug-hunt`)。
+3. **`script=`** —— 裸 Python 源码,留给确实能写脚本的模型。
+
+**内置容错**(默认开)让被弄坏的 `script` 被还原而非拒绝——`sandbox.normalize_script` 会剥掉 markdown ` ```python ` 围栏、JSON 编码、单/双/三引号包裹(真换行或转义换行均可)、前导散文,且支持任意组合,再用 `ast.parse` 校验。缺省参数传成字符串 `"null"` 会被归一成 `None`;源码误塞进 `name`/`scriptPath` 会被重路由到 `script`。校验确实失败时,错误里附**最小正确范例**,便于模型自我纠正。
+
+容错由 **`OPENWORKFLOW_LENIENT`**(默认 `1`)控制。设 `OPENWORKFLOW_LENIENT=0` 恢复严格原生契约(不解包、不归一)——便于和原版做行为对齐测试。无论开关如何,强模型给的干净脚本都不会被改动。
+
+集成配方、覆盖的失效模式清单与验收基线见 [`LOCAL_LLM_HARDENING.md`](LOCAL_LLM_HARDENING.md)。
 
 ---
 
