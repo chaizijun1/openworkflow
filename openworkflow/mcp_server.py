@@ -249,6 +249,47 @@ def _warn_once(message: str) -> None:
         _warned_sampling = True
 
 
+# --- tolerance for weaker models (e.g. local 27B) that mangle the tool args ---
+def _nullish(v: Any) -> Any:
+    """Weaker models often pass an absent arg as the string ``"null"``/``"none"``/``""``."""
+    if v is None:
+        return None
+    s = str(v).strip()
+    return None if s.lower() in ("null", "none", "undefined", "") else s
+
+
+def _unwrap_script(s: str) -> str:
+    """Weaker models often wrap the whole script in an extra quote layer / JSON-encode it.
+
+    The native contract is: ``script`` is raw Python source whose first statement is ``meta = {...}``.
+    If the source instead begins with a quote and the inner content begins with ``meta``, undo the
+    wrapping (try JSON decode for escaped forms; else strip the surrounding quotes literally).
+    """
+    s = s.strip()
+    if not s or s[0] not in "\"'":
+        return s
+    try:
+        d = json.loads(s)
+        if isinstance(d, str) and d.lstrip().startswith("meta"):
+            return d.strip()
+    except Exception:
+        pass
+    q = s[0]
+    body = s[1:]
+    if body.rstrip().endswith(q):
+        body = body.rstrip()[:-1]
+    if body.lstrip().startswith("meta"):
+        return body.strip()
+    return s
+
+
+def _sanitize_args(script: Any, name: Any, scriptPath: Any) -> tuple[Any, Any, Any]:
+    script, name, scriptPath = _nullish(script), _nullish(name), _nullish(scriptPath)
+    if isinstance(script, str) and script:
+        script = _unwrap_script(script)
+    return script, name, scriptPath
+
+
 async def execute_workflow(
     *,
     script: str | None = None,
@@ -270,6 +311,7 @@ async def execute_workflow(
     if warning:
         _warn_once(warning)
 
+    script, name, scriptPath = _sanitize_args(script, name, scriptPath)   # 容错:弱模型把 script 套引号 / 传 "null"
     if script is not None:
         source: Any = script
     elif name is not None:
